@@ -1,0 +1,11 @@
+executable   = PATH_TP_UV #which uv
+arguments    = run gnn
+output       = gnn.out
+error        = gnn.err
+log          = gnn.log
+
+Requirements = CUDADriverVersion >= 12.0
+
++request_gpus = 1
+
+queue 1
