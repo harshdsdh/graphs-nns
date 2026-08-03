@@ -8,8 +8,10 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+from sentence_transformers import SentenceTransformer
 
 from .gcn_model import Net
+from .slm_model import NetEnc
 
 
 def get_device() -> torch.device:
@@ -80,6 +82,29 @@ def plot_training_metrics(l: list, a: list) -> None:
     plt.show()
 
 
+def generate_node_text_llm_embs(texts, model_name, batch_size=16):
+    """load qwen embeddings from hf"""
+    if model_name == "small":
+        model_name = "Qwen/Qwen3-Embedding-0.6B"
+    elif model_name == "large":
+        model_name = "Qwen/Qwen3-Embedding-8B"
+
+    print(f"model name: {model_name}")
+
+    cleaned_texts = ["" if text is None else str(text) for text in texts]
+    device = get_device()
+    encoder = SentenceTransformer(model_name, device=device)
+    embeddings = encoder.encode(
+        cleaned_texts,
+        batch_size=batch_size,
+        show_progress_bar=True,
+        convert_to_tensor=True,
+        normalize_embeddings=True,
+    )
+
+    return embeddings.cpu().float()
+
+
 def main() -> None:
     """init GNN code on graph dataset"""
     print("Hello from graphs-nn!")
@@ -107,13 +132,76 @@ def main() -> None:
     data = torch.load(path, weights_only=False)
     data = data.to(device)
     print(data.label_texts)
+    for model_type in ["baseline", "small_language_model", "large_language_model"]:
+        print(f"model_type: {model_type}")
+        if model_type == "baseline":
+            model = Net(data.num_node_features, data.num_classes).to(device)
+            optimizer = torch.optim.Adam(
+                params=model.parameters(), lr=0.01, weight_decay=5e-3
+            )
 
-    model = Net(data.num_node_features, data.num_classes).to(device)
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.01, weight_decay=5e-3)
+            losses, acc = train(model, optimizer, data)
 
-    losses, acc = train(model, optimizer, data)
+            plot_training_metrics(losses, acc)
 
-    plot_training_metrics(losses, acc)
+            temp = [test(model, data) for _ in range(10)]
+            print(f"mean test results: {np.mean(temp)}, std dev: {np.std(temp)}")
+        elif model_type == "small_language_model":
+            data.x = generate_node_text_llm_embs(data.raw_texts, "small", batch_size=16)
 
-    temp = [test(model, data) for _ in range(10)]
-    print(f"mean test results: {np.mean(temp)}, std dev: {np.std(temp)}")
+            print(f"Nodes: {data.num_nodes}")
+            print(f"Embedding dimension: {data.x.shape[1]}")
+            print(f"Feature matrix: {data.x.shape}")
+            data = data.to(device)
+            torch.save(
+                data.x,
+                f"./grasp_data/cora/{model_type}_embeddings.pt",
+            )
+
+            x = torch.load(
+                f"./grasp_data/cora/{model_type}_embeddings.pt", weights_only=False
+            )
+
+            data.x = x
+            model = NetEnc(data.num_node_features, data.num_classes).to(device)
+            optimizer = torch.optim.Adam(
+                params=model.parameters(), lr=0.01, weight_decay=5e-3
+            )
+
+            losses, acc = train(model, optimizer, data)
+
+            plot_training_metrics(losses, acc)
+
+            temp = [test(model, data) for _ in range(10)]
+            print(f"mean test results: {np.mean(temp)}, std dev: {np.std(temp)}")
+
+        elif model_type == "large_language_model":
+
+            data.x = generate_node_text_llm_embs(data.raw_texts, "large", batch_size=16)
+
+            print(f"Nodes: {data.num_nodes}")
+            print(f"Embedding dimension: {data.x.shape[1]}")
+            print(f"Feature matrix: {data.x.shape}")
+            data = data.to(device)
+            torch.save(
+                data.x,
+                f"./grasp_data/cora/{model_type}_embeddings.pt",
+            )
+
+            x = torch.load(
+                f"./grasp_data/cora/{model_type}_embeddings.pt", weights_only=False
+            )
+
+            data.x = x
+            model = NetEnc(data.num_node_features, data.num_classes).to(device)
+            optimizer = torch.optim.Adam(
+                params=model.parameters(), lr=0.01, weight_decay=5e-3
+            )
+
+            losses, acc = train(model, optimizer, data)
+
+            plot_training_metrics(losses, acc)
+
+            temp = [test(model, data) for _ in range(10)]
+            print(f"mean test results: {np.mean(temp)}, std dev: {np.std(temp)}")
+    print("process completed")
