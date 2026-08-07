@@ -16,7 +16,7 @@ from load_emb import generate_node_text_llm_embs, model_dict
 HIDDEN_DIM = 16
 
 
-def train(model, optimizer, data) -> list:
+def train(model: torch.nn.Module, optimizer: torch.optim, data) -> None:
     """train a basic GCN model"""
     losses = []
     accuracies = []
@@ -36,7 +36,6 @@ def train(model, optimizer, data) -> list:
         correct = (pred[data.val_mask] == data.y[data.val_mask]).sum()
         acc = int(correct) / int(data.val_mask.sum())
         accuracies.append(acc)
-    return [losses, accuracies]
 
 
 @torch.no_grad()
