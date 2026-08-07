@@ -10,9 +10,17 @@ dependencies = [
     "numpy>=2.5.1",
     "scikit-learn>=1.9.0",
     "sentence-transformers>=5.6.1",
-    "torch>=2.13.0",
+    "torch>=2.11.0",
     "torch-geometric>=2.8.0.post1",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
 
 [project.scripts]
 gnn = "gnn:main"

@@ -4,27 +4,16 @@ run graph neural network code on gpu
 
 import random
 import argparse
+from pathlib import Path
 import torch
 import numpy as np
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
-from sentence_transformers import SentenceTransformer
 
-from .gcn_model import Net
-from .slm_model import NetEnc
+from model import Net
+from utilities import get_device
+from load_emb import generate_node_text_llm_embs, model_dict
 
-
-def get_device() -> torch.device:
-    """
-    switch between mps, cpu and cuda
-    """
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
-    return device
+HIDDEN_DIM = 16
 
 
 def train(model, optimizer, data) -> list:
@@ -63,48 +52,6 @@ def test(model, data) -> list:
     return accuracies
 
 
-def plot_training_metrics(l: list, a: list) -> None:
-    """
-    plot training loss ans validation acc plots
-    """
-    fig, ax1 = plt.subplots(figsize=(8, 5))
-
-    ax1.plot(l, label="Training Loss")
-    ax1.set_xlabel("Epoch")
-    ax1.set_ylabel("Loss")
-    ax1.grid(True)
-
-    ax2 = ax1.twinx()
-    ax2.plot(a, label="Validation Accuracy")
-    ax2.set_ylabel("Accuracy")
-
-    plt.title("Training Loss and Validation Accuracy")
-    plt.show()
-
-
-def generate_node_text_llm_embs(texts, model_name, batch_size=16):
-    """load qwen embeddings from hf"""
-    if model_name == "small":
-        model_name = "Qwen/Qwen3-Embedding-0.6B"
-    elif model_name == "large":
-        model_name = "Qwen/Qwen3-Embedding-8B"
-
-    print(f"model name: {model_name}")
-
-    cleaned_texts = ["" if text is None else str(text) for text in texts]
-    device = get_device()
-    encoder = SentenceTransformer(model_name, device=device)
-    embeddings = encoder.encode(
-        cleaned_texts,
-        batch_size=batch_size,
-        show_progress_bar=True,
-        convert_to_tensor=True,
-        normalize_embeddings=True,
-    )
-
-    return embeddings.cpu().float()
-
-
 def main() -> None:
     """init GNN code on graph dataset"""
     print("Hello from graphs-nn!")
@@ -127,81 +74,34 @@ def main() -> None:
     print(f"using device: {device}")
 
     ### load data
-    path = f"./src/gnn/grasp_data/{graph_name}/processed_data.pt"
+    path = Path(f"./src/gnn/grasp_data/{graph_name}/processed_data.pt")
+    if path.is_file():
+        print(f"{graph_name} dataset available")
+
     print(f"path:{path}")
     data = torch.load(path, weights_only=False)
     data = data.to(device)
     print(data.label_texts)
-    for model_type in ["baseline", "small_language_model", "large_language_model"]:
-        print(f"model_type: {model_type}")
-        if model_type == "baseline":
-            model = Net(data.num_node_features, data.num_classes).to(device)
-            optimizer = torch.optim.Adam(
-                params=model.parameters(), lr=0.01, weight_decay=5e-3
-            )
+    original_text = data.raw_texts
+    for i, m in enumerate(model_dict.keys()):
+        text = original_text
+        print(f"case {i}: {m} LLM model using {model_dict[m]} embedding")
+        emb = generate_node_text_llm_embs(text, graph_name, model_dict[m])
 
-            losses, acc = train(model, optimizer, data)
+        print(f"Nodes: {data.num_nodes}")
+        print(f"Embedding dimension: {data.x.shape[1]}")
+        print(f"Feature matrix: {data.x.shape}")
 
-            plot_training_metrics(losses, acc)
+        data = data.to(device)
+        data.x = emb
 
-            temp = [test(model, data) for _ in range(10)]
-            print(f"mean test results: {np.mean(temp)}, std dev: {np.std(temp)}")
-        elif model_type == "small_language_model":
-            data.x = generate_node_text_llm_embs(data.raw_texts, "small", batch_size=16)
+        model = Net(data.num_node_features, HIDDEN_DIM, data.num_classes).to(device)
+        optimizer = torch.optim.Adam(
+            params=model.parameters(), lr=0.01, weight_decay=5e-3
+        )
+        train(model, optimizer, data)
 
-            print(f"Nodes: {data.num_nodes}")
-            print(f"Embedding dimension: {data.x.shape[1]}")
-            print(f"Feature matrix: {data.x.shape}")
-            data = data.to(device)
-            torch.save(
-                data.x,
-                f"./grasp_data/cora/{model_type}_embeddings.pt",
-            )
+        temp = [test(model, data) for _ in range(10)]
+        print(f"mean test results: {np.mean(temp)}, std dev: {np.std(temp)}")
 
-            x = torch.load(
-                f"./grasp_data/cora/{model_type}_embeddings.pt", weights_only=False
-            )
-
-            data.x = x
-            model = NetEnc(data.num_node_features, data.num_classes).to(device)
-            optimizer = torch.optim.Adam(
-                params=model.parameters(), lr=0.01, weight_decay=5e-3
-            )
-
-            losses, acc = train(model, optimizer, data)
-
-            plot_training_metrics(losses, acc)
-
-            temp = [test(model, data) for _ in range(10)]
-            print(f"mean test results: {np.mean(temp)}, std dev: {np.std(temp)}")
-
-        elif model_type == "large_language_model":
-
-            data.x = generate_node_text_llm_embs(data.raw_texts, "large", batch_size=16)
-
-            print(f"Nodes: {data.num_nodes}")
-            print(f"Embedding dimension: {data.x.shape[1]}")
-            print(f"Feature matrix: {data.x.shape}")
-            data = data.to(device)
-            torch.save(
-                data.x,
-                f"./grasp_data/cora/{model_type}_embeddings.pt",
-            )
-
-            x = torch.load(
-                f"./grasp_data/cora/{model_type}_embeddings.pt", weights_only=False
-            )
-
-            data.x = x
-            model = NetEnc(data.num_node_features, data.num_classes).to(device)
-            optimizer = torch.optim.Adam(
-                params=model.parameters(), lr=0.01, weight_decay=5e-3
-            )
-
-            losses, acc = train(model, optimizer, data)
-
-            plot_training_metrics(losses, acc)
-
-            temp = [test(model, data) for _ in range(10)]
-            print(f"mean test results: {np.mean(temp)}, std dev: {np.std(temp)}")
-    print("process completed")
+    print("process complete")
